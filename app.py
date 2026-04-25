@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
 import numpy as np
+import streamlit.components.v1 as components
 
 # ─────────────────────────────────────────────
 #  CONFIG
@@ -52,6 +53,8 @@ def init_state():
         'total_wins': 0, 'total_losses': 0,
         'sequencia': 0, 'melhor_sequencia': 0, 'pior_sequencia': 0,
         'logs': pd.DataFrame(columns=['Hora','Ativo','Direção','Resultado','Valor','P&L','Saldo']),
+        'resultados_sniper': {},
+        'analisado': False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -60,7 +63,7 @@ def init_state():
 init_state()
 
 # ─────────────────────────────────────────────
-#  INDICADORES — CÁLCULO MANUAL SEM pandas-ta
+#  INDICADORES MANUAIS
 # ─────────────────────────────────────────────
 def calc_rsi(s, p=14):
     d = s.diff()
@@ -87,13 +90,13 @@ def calc_stoch(h, l, c, k=14, d=3):
     return sk, sk.rolling(d).mean()
 
 def calc_atr(h, l, c, p=14):
-    tr = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
+    tr = pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
     return tr.rolling(p).mean()
 
 def calcular_indicadores(df):
     c = df['Close']; h = df['High']; l = df['Low']
     df = df.copy()
-    df['RSI'] = calc_rsi(c)
+    df['RSI']  = calc_rsi(c)
     df['EMA_8']  = calc_ema(c, 8)
     df['EMA_20'] = calc_ema(c, 20)
     df['EMA_50'] = calc_ema(c, 50)
@@ -104,66 +107,42 @@ def calcular_indicadores(df):
     return df.dropna()
 
 # ─────────────────────────────────────────────
-#  SESSÕES DE MERCADO E MELHORES HORÁRIOS
+#  SESSÕES DE MERCADO
 # ─────────────────────────────────────────────
 SESSOES = {
-    "Ásia":       (0,  9,  "#aa77ff"),
-    "Londres":    (8,  17, "#00ffcc"),
-    "Nova York":  (13, 22, "#ffaa00"),
+    "Ásia":      (0,  9,  "#aa77ff"),
+    "Londres":   (8,  17, "#00ffcc"),
+    "Nova York": (13, 22, "#ffaa00"),
 }
-# Overlaps = maior liquidez e volatilidade
 MELHORES_JANELAS = [
-    (8,  9,  "Abertura Londres",         "#00ffcc"),
-    (13, 17, "Overlap Londres + NY 🔥",  "#00ff88"),
-    (20, 22, "Fechamento NY",            "#ffaa00"),
+    (8,  9,  "Abertura Londres",        "#00ffcc"),
+    (13, 17, "Overlap Londres + NY 🔥", "#00ff88"),
+    (20, 22, "Fechamento NY",           "#ffaa00"),
 ]
 
 def status_mercado():
-    """Retorna sessões ativas, qualidade do momento e próxima janela (UTC-3 Brasília)."""
-    agora = datetime.utcnow()
-    hora_utc  = agora.hour + agora.minute / 60
-    hora_brt  = (hora_utc - 3) % 24   # Brasília = UTC-3
-
+    agora    = datetime.utcnow()
+    hora_utc = agora.hour + agora.minute / 60
+    hora_brt = (hora_utc - 3) % 24
     ativas, cores = [], []
     for nome, (ini, fim, cor) in SESSOES.items():
         if ini <= hora_utc < fim:
             ativas.append(nome); cores.append(cor)
-
-    # Qualidade
-    qualidade = "🔴 BAIXA"
-    qualidade_cor = "#ff4444"
-    descricao = "Mercado com baixa liquidez"
+    qualidade = "🔴 BAIXA"; q_cor = "#ff4444"; descricao = "Baixa liquidez"
     for ini, fim, desc, cor in MELHORES_JANELAS:
         if ini <= hora_utc < fim:
             qualidade = "🟢 ALTA" if "Overlap" in desc or "Abertura" in desc else "🟡 MÉDIA"
-            qualidade_cor = cor
-            descricao = desc
-            break
-    else:
-        if not ativas:
-            qualidade = "⚫ FECHADO"
-            qualidade_cor = "#607090"
-            descricao = "Mercados principais fechados"
-
-    # Próxima janela
+            q_cor = cor; descricao = desc; break
+    if not ativas:
+        qualidade = "⚫ FECHADO"; q_cor = "#607090"; descricao = "Mercados fechados"
     proxima = None
     for ini, fim, desc, cor in MELHORES_JANELAS:
         ini_brt = (ini - 3) % 24
         if hora_brt < ini_brt:
-            proxima = f"{desc} às {ini_brt:02.0f}h (Brasília)"
-            break
-    if proxima is None:
+            proxima = f"{desc} às {ini_brt:02.0f}h (Brasília)"; break
+    if not proxima:
         proxima = "Overlap Londres+NY amanhã às 10h (Brasília)"
-
-    return ativas, qualidade, qualidade_cor, descricao, proxima, hora_brt
-
-EXPIRACAO_SEG = {
-    "30 segundos": 30,
-    "1 minuto":    60,
-    "2 minutos":   120,
-    "5 minutos":   300,
-    "30 minutos":  1800,
-}
+    return ativas, qualidade, q_cor, descricao, proxima, hora_brt
 
 # ─────────────────────────────────────────────
 #  DADOS
@@ -174,9 +153,9 @@ ATIVOS = {
     "Ouro":"GC=F","Petróleo":"CL=F","S&P 500":"^GSPC","Nasdaq":"^IXIC",
 }
 TIMEFRAMES = {"1 min":("1d","1m"),"5 min":("5d","5m"),"15 min":("1mo","15m"),"1 hora":("3mo","1h")}
+EXPIRACAO_SEG = {"30 segundos":30,"1 minuto":60,"2 minutos":120,"5 minutos":300,"30 minutos":1800}
 
-@st.cache_data(ttl=30, show_spinner=False)
-def buscar_dados(ticker, period, interval):
+def buscar_e_calcular(ticker, period, interval):
     try:
         df = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
         if df.empty or len(df) < 50:
@@ -185,7 +164,7 @@ def buscar_dados(ticker, period, interval):
             df.columns = df.columns.get_level_values(0)
         df = df[['Open','High','Low','Close','Volume']].copy()
         df = df.apply(pd.to_numeric, errors='coerce').dropna()
-        return df
+        return calcular_indicadores(df)
     except Exception:
         return None
 
@@ -196,11 +175,9 @@ def calcular_score(df):
     if df is None or len(df) < 2: return 0, 0
     row = df.iloc[-1]; prev = df.iloc[-2]
     sc = sp = 0
-
     def flt(col, default=0):
         v = row.get(col, default)
         return float(v) if not pd.isna(v) else default
-
     def flt2(col, default=0):
         v = prev.get(col, default)
         return float(v) if not pd.isna(v) else default
@@ -332,7 +309,8 @@ with st.sidebar:
 
     st.divider()
     if st.button("🔄 Resetar Banca", use_container_width=True):
-        for k in ['banca','banca_max','total_wins','total_losses','sequencia','melhor_sequencia','pior_sequencia','logs']:
+        for k in ['banca','banca_max','total_wins','total_losses','sequencia',
+                  'melhor_sequencia','pior_sequencia','logs','resultados_sniper','analisado']:
             del st.session_state[k]
         st.rerun()
 
@@ -344,48 +322,25 @@ tab_sniper, tab_chart, tab_perf, tab_risco = st.tabs([
 
 # ══ SNIPER ══════════════════════════════════
 with tab_sniper:
-    # ── ALERTA SONORO (Web Audio API via JS) ──
-    st.markdown("""
-    <script>
-    function playBeep(type) {
-        var ctx = new (window.AudioContext || window.webkitAudioContext)();
-        var osc = ctx.createOscillator();
-        var gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        if (type === 'call') {
-            osc.frequency.setValueAtTime(880, ctx.currentTime);
-            osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.15);
-            osc.frequency.setValueAtTime(1320, ctx.currentTime + 0.30);
-        } else {
-            osc.frequency.setValueAtTime(660, ctx.currentTime);
-            osc.frequency.setValueAtTime(440, ctx.currentTime + 0.15);
-            osc.frequency.setValueAtTime(330, ctx.currentTime + 0.30);
-        }
-        gain.gain.setValueAtTime(0.4, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
-        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.6);
-    }
-    window.playBeep = playBeep;
-    </script>
-    """, unsafe_allow_html=True)
 
-    # ── PAINEL DE SESSÕES E MELHORES HORÁRIOS ──
+    # ── PAINEL SESSÕES ──
     ativas, qualidade, q_cor, descricao, proxima, hora_brt = status_mercado()
     sessoes_str = " · ".join(ativas) if ativas else "Nenhuma"
+    hora_fmt = f"{int(hora_brt):02d}:{int((hora_brt % 1)*60):02d}"
     st.markdown(f"""
     <div style="background:linear-gradient(135deg,#0d1520,#0a1525);border:1px solid #1a2030;
                 border-left:4px solid {q_cor};border-radius:12px;padding:16px 20px;margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
             <div>
                 <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">🕐 HORA BRASÍLIA</div>
-                <div style="font-family:'Orbitron',monospace;font-size:1.4rem;color:#ffffff;font-weight:700">{hora_brt:05.2f}h</div>
+                <div style="font-family:'Orbitron',monospace;font-size:1.4rem;color:#fff;font-weight:700">{hora_fmt}</div>
             </div>
             <div>
                 <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">📡 SESSÕES ATIVAS</div>
-                <div style="font-family:'Orbitron',monospace;font-size:0.95rem;color:#00ffcc">{sessoes_str}</div>
+                <div style="font-family:'Orbitron',monospace;font-size:0.9rem;color:#00ffcc">{sessoes_str}</div>
             </div>
             <div>
-                <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">⚡ QUALIDADE DO MOMENTO</div>
+                <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">⚡ QUALIDADE</div>
                 <div style="font-family:'Orbitron',monospace;font-size:1rem;font-weight:700;color:{q_cor}">{qualidade}</div>
                 <div style="color:#607090;font-size:0.75rem">{descricao}</div>
             </div>
@@ -395,124 +350,184 @@ with tab_sniper:
             </div>
         </div>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-            <span style="background:#aa77ff22;color:#aa77ff;border:1px solid #aa77ff44;padding:2px 10px;border-radius:20px;font-size:0.72rem">🌏 ÁSIA: 20h–05h BRT</span>
-            <span style="background:#00ffcc22;color:#00ffcc;border:1px solid #00ffcc44;padding:2px 10px;border-radius:20px;font-size:0.72rem">🇬🇧 LONDRES: 05h–14h BRT</span>
-            <span style="background:#ffaa0022;color:#ffaa00;border:1px solid #ffaa0044;padding:2px 10px;border-radius:20px;font-size:0.72rem">🇺🇸 NOVA YORK: 10h–19h BRT</span>
-            <span style="background:#00ff8822;color:#00ff88;border:1px solid #00ff8844;padding:2px 10px;border-radius:20px;font-size:0.72rem">🔥 MELHOR: 10h–14h BRT (Overlap)</span>
+            <span style="background:#aa77ff22;color:#aa77ff;border:1px solid #aa77ff44;padding:2px 10px;border-radius:20px;font-size:0.72rem">🌏 ÁSIA 20h–05h</span>
+            <span style="background:#00ffcc22;color:#00ffcc;border:1px solid #00ffcc44;padding:2px 10px;border-radius:20px;font-size:0.72rem">🇬🇧 LONDRES 05h–14h</span>
+            <span style="background:#ffaa0022;color:#ffaa00;border:1px solid #ffaa0044;padding:2px 10px;border-radius:20px;font-size:0.72rem">🇺🇸 NOVA YORK 10h–19h</span>
+            <span style="background:#00ff8822;color:#00ff88;border:1px solid #00ff8844;padding:2px 10px;border-radius:20px;font-size:0.72rem">🔥 MELHOR: 10h–14h BRT</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
     if not ativos_sel:
-        st.info("Selecione ao menos um ativo.")
+        st.info("Selecione ao menos um ativo na sidebar.")
     else:
-        st.caption(f"Timeframe: **{tf_sel}** | {datetime.now().strftime('%H:%M:%S')}")
-        if st.button("🔁 Atualizar"): st.cache_data.clear()
-        cols = st.columns(min(len(ativos_sel), 3))
-        for i, nome in enumerate(ativos_sel):
-            col = cols[i % len(cols)]
-            with col:
-                with st.spinner(f"Carregando {nome}..."):
-                    df = buscar_dados(ATIVOS[nome], period, interval)
-                if df is None: st.warning(f"Sem dados: {nome}"); continue
-                try: df = calcular_indicadores(df)
-                except Exception as e: st.warning(f"Erro: {e}"); continue
+        # ── BOTÃO DE ANÁLISE — dados só são buscados aqui ──
+        col_btn, col_info = st.columns([1, 3])
+        with col_btn:
+            analisar = st.button("🔍 ANALISAR AGORA", use_container_width=True)
+        with col_info:
+            st.caption(f"Timeframe: **{tf_sel}** | Expiração: **{expiracao}** | {datetime.now().strftime('%H:%M:%S')}")
 
-                sc, sp = calcular_score(df)
-                last = df.iloc[-1]; prev = df.iloc[-2]
-                close = float(last['Close']); pct = (close/float(prev['Close'])-1)*100
-                dc2 = "#00ff88" if pct >= 0 else "#ff4444"
-                st.markdown(mcard(ATIVOS[nome], f"{close:.5f}", f"{'▲' if pct>=0 else '▼'} {abs(pct):.3f}%", dc2), unsafe_allow_html=True)
+        if analisar:
+            st.session_state.analisado = True
+            st.session_state.resultados_sniper = {}
+            with st.spinner("🔄 Buscando dados e calculando sinais..."):
+                for nome in ativos_sel:
+                    df = buscar_e_calcular(ATIVOS[nome], period, interval)
+                    st.session_state.resultados_sniper[nome] = df
 
-                rsi_v = float(last['RSI']); mh = float(last['MACD_HIST'])
-                atr_v = float(last['ATR']); stk = float(last['STOCH_K'])
-                a, b = st.columns(2)
-                with a:
-                    rc = "#00ff88" if rsi_v<35 else "#ff4444" if rsi_v>65 else "#e0e0e0"
-                    st.markdown(f"<small style='color:#607090'>RSI 14</small><br><b style='color:{rc}'>{rsi_v:.1f}</b>", unsafe_allow_html=True)
-                    st.markdown(f"<small style='color:#607090'>STOCH K</small><br><b>{stk:.1f}</b>", unsafe_allow_html=True)
-                with b:
-                    mc2 = "#00ff88" if mh>0 else "#ff4444"
-                    st.markdown(f"<small style='color:#607090'>MACD Hist</small><br><b style='color:{mc2}'>{mh:.5f}</b>", unsafe_allow_html=True)
-                    st.markdown(f"<small style='color:#607090'>ATR</small><br><b>{atr_v:.5f}</b>", unsafe_allow_html=True)
+        if not st.session_state.analisado:
+            st.markdown("""
+            <div style="text-align:center;padding:40px;background:#0d1520;border-radius:12px;border:1px dashed #1a2030;margin-top:16px">
+                <div style="font-family:'Orbitron',monospace;font-size:1.1rem;color:#607090;letter-spacing:2px">
+                    🎯 PRONTO PARA ANALISAR
+                </div>
+                <div style="color:#607090;font-size:0.85rem;margin-top:8px">
+                    Selecione os ativos e clique em <b style="color:#00ffcc">ANALISAR AGORA</b>
+                </div>
+            </div>""", unsafe_allow_html=True)
+        else:
+            resultados = st.session_state.resultados_sniper
+            cols = st.columns(min(len(ativos_sel), 3))
+            sinais_ativos = []
 
-                if sc >= 65 or sp >= 65:
-                    dom    = "CALL" if sc >= sp else "PUT"
-                    score  = sc if dom=="CALL" else sp
-                    css    = "signal-call" if dom=="CALL" else "signal-put"
-                    icon   = "💎 CALL ▲" if dom=="CALL" else "📉 PUT ▼"
-                    bc     = "#00ff88" if dom=="CALL" else "#ff4444"
-                    acao   = "🟢 COMPRA" if dom=="CALL" else "🔴 VENDA"
-                    seg    = EXPIRACAO_SEG.get(expiracao, 60)
-                    timer_id = f"timer_{nome.replace('/','_').replace(' ','_')}"
-                    sound_type = "call" if dom=="CALL" else "put"
-                    st.markdown(f"""
-                    <div class="{css}">
-                        <div class="signal-title">{icon}</div>
-                        <div style="font-family:'Orbitron',monospace;font-size:1.6rem;font-weight:900;color:{bc};margin:6px 0;letter-spacing:2px">{acao}</div>
-                        <div style="color:#607090;font-size:0.75rem;">Score de Confluência</div>
-                        <div style="font-family:'Orbitron',monospace;font-size:1.2rem;color:{bc}">{score}/100</div>
-                        <div class="score-bar-bg"><div class="score-bar-fill" style="width:{score}%;background:{bc}"></div></div>
-                        <div style="margin-top:8px;padding:6px 10px;background:rgba(0,0,0,0.3);border-radius:6px;text-align:center">
-                            <span style="color:#607090;font-size:0.72rem;letter-spacing:1px">⏱ EXPIRAÇÃO</span><br>
-                            <span style="font-family:'Orbitron',monospace;color:#ffffff;font-size:1rem;font-weight:700">{expiracao.upper()}</span>
+            for i, nome in enumerate(ativos_sel):
+                col = cols[i % len(cols)]
+                df  = resultados.get(nome)
+                with col:
+                    if df is None:
+                        st.warning(f"Sem dados: {nome}"); continue
+
+                    sc, sp = calcular_score(df)
+                    last = df.iloc[-1]; prev = df.iloc[-2]
+                    close = float(last['Close']); pct = (close/float(prev['Close'])-1)*100
+                    dc2 = "#00ff88" if pct >= 0 else "#ff4444"
+                    st.markdown(mcard(ATIVOS[nome], f"{close:.5f}", f"{'▲' if pct>=0 else '▼'} {abs(pct):.3f}%", dc2), unsafe_allow_html=True)
+
+                    rsi_v = float(last['RSI']); mh = float(last['MACD_HIST'])
+                    atr_v = float(last['ATR']); stk = float(last['STOCH_K'])
+                    a, b = st.columns(2)
+                    with a:
+                        rc = "#00ff88" if rsi_v<35 else "#ff4444" if rsi_v>65 else "#e0e0e0"
+                        st.markdown(f"<small style='color:#607090'>RSI 14</small><br><b style='color:{rc}'>{rsi_v:.1f}</b>", unsafe_allow_html=True)
+                        st.markdown(f"<small style='color:#607090'>STOCH K</small><br><b>{stk:.1f}</b>", unsafe_allow_html=True)
+                    with b:
+                        mc2 = "#00ff88" if mh>0 else "#ff4444"
+                        st.markdown(f"<small style='color:#607090'>MACD Hist</small><br><b style='color:{mc2}'>{mh:.5f}</b>", unsafe_allow_html=True)
+                        st.markdown(f"<small style='color:#607090'>ATR</small><br><b>{atr_v:.5f}</b>", unsafe_allow_html=True)
+
+                    if sc >= 65 or sp >= 65:
+                        dom   = "CALL" if sc >= sp else "PUT"
+                        score = sc if dom=="CALL" else sp
+                        css   = "signal-call" if dom=="CALL" else "signal-put"
+                        icon  = "💎 CALL ▲" if dom=="CALL" else "📉 PUT ▼"
+                        bc    = "#00ff88" if dom=="CALL" else "#ff4444"
+                        acao  = "🟢 COMPRA" if dom=="CALL" else "🔴 VENDA"
+                        seg   = EXPIRACAO_SEG.get(expiracao, 60)
+                        tid   = f"t_{i}"
+                        sinais_ativos.append((nome, dom, score))
+
+                        st.markdown(f"""
+                        <div class="{css}">
+                            <div class="signal-title">{icon}</div>
+                            <div style="font-family:'Orbitron',monospace;font-size:1.6rem;font-weight:900;
+                                        color:{bc};margin:6px 0;letter-spacing:2px">{acao}</div>
+                            <div style="color:#607090;font-size:0.75rem">Score de Confluência</div>
+                            <div style="font-family:'Orbitron',monospace;font-size:1.2rem;color:{bc}">{score}/100</div>
+                            <div class="score-bar-bg">
+                                <div class="score-bar-fill" style="width:{score}%;background:{bc}"></div>
+                            </div>
+                            <div style="margin-top:8px;padding:6px 10px;background:rgba(0,0,0,0.3);
+                                        border-radius:6px;text-align:center">
+                                <span style="color:#607090;font-size:0.72rem;letter-spacing:1px">⏱ EXPIRAÇÃO</span><br>
+                                <span style="font-family:'Orbitron',monospace;color:#fff;font-size:1rem;
+                                             font-weight:700">{expiracao.upper()}</span>
+                            </div>
                         </div>
-                        <div style="margin-top:10px;padding:10px;background:rgba(0,0,0,0.4);border-radius:8px;text-align:center;border:1px solid {bc}44">
-                            <div style="color:#607090;font-size:0.72rem;letter-spacing:1px;margin-bottom:4px">⏳ TEMPO NA OPERAÇÃO</div>
-                            <div id="{timer_id}" style="font-family:'Orbitron',monospace;font-size:2rem;font-weight:900;color:{bc}">--:--</div>
-                            <div id="{timer_id}_msg" style="font-size:0.75rem;color:#607090;margin-top:4px"></div>
-                            <button onclick="startTimer_{timer_id}()" style="margin-top:8px;background:{bc};color:#000;border:none;
-                                border-radius:6px;padding:6px 18px;font-family:'Orbitron',monospace;font-size:0.75rem;
-                                font-weight:700;cursor:pointer;letter-spacing:1px">▶ ENTRAR AGORA</button>
+                        """, unsafe_allow_html=True)
+
+                        # Timer + Som via components.html
+                        components.html(f"""
+                        <div style="background:rgba(0,0,0,0.5);border:1px solid {bc}44;border-radius:8px;
+                                    padding:12px;text-align:center;font-family:monospace;margin-top:4px">
+                            <div style="color:#607090;font-size:11px;letter-spacing:1px;margin-bottom:4px">
+                                ⏳ TEMPO NA OPERAÇÃO
+                            </div>
+                            <div id="timer_{tid}" style="font-size:2.2rem;font-weight:900;color:{bc};
+                                                         letter-spacing:2px">--:--</div>
+                            <div id="msg_{tid}" style="font-size:11px;color:#607090;margin:4px 0 8px"></div>
+                            <button id="btn_{tid}" onclick="startTimer()"
+                                style="background:{bc};color:#000;border:none;border-radius:6px;
+                                       padding:8px 20px;font-weight:900;font-size:12px;
+                                       cursor:pointer;letter-spacing:1px;width:100%">
+                                ▶ ENTRAR AGORA + ALERTA SONORO
+                            </button>
                         </div>
-                    </div>
-                    <script>
-                    (function(){{
+                        <script>
                         var duration = {seg};
-                        var interval = null;
-                        window["startTimer_{timer_id}"] = function() {{
-                            if (interval) clearInterval(interval);
-                            if (window.playBeep) window.playBeep('{sound_type}');
+                        var timerInterval = null;
+                        function playBeep(type) {{
+                            try {{
+                                var ctx = new (window.AudioContext || window.webkitAudioContext)();
+                                var freqs = type==='call' ? [880,1100,1320] : [660,440,330];
+                                freqs.forEach(function(f, idx) {{
+                                    var osc = ctx.createOscillator();
+                                    var gain = ctx.createGain();
+                                    osc.connect(gain); gain.connect(ctx.destination);
+                                    osc.frequency.value = f;
+                                    gain.gain.setValueAtTime(0.35, ctx.currentTime + idx*0.18);
+                                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx*0.18 + 0.3);
+                                    osc.start(ctx.currentTime + idx*0.18);
+                                    osc.stop(ctx.currentTime + idx*0.18 + 0.3);
+                                }});
+                            }} catch(e) {{}}
+                        }}
+                        function startTimer() {{
+                            if (timerInterval) clearInterval(timerInterval);
+                            playBeep('{dom.lower()}');
+                            document.getElementById('btn_{tid}').textContent = '⏸ OPERAÇÃO ATIVA';
+                            document.getElementById('btn_{tid}').style.opacity = '0.6';
+                            document.getElementById('btn_{tid}').disabled = true;
                             var remaining = duration;
-                            var el = document.getElementById("{timer_id}");
-                            var msg = document.getElementById("{timer_id}_msg");
-                            interval = setInterval(function() {{
+                            var el  = document.getElementById('timer_{tid}');
+                            var msg = document.getElementById('msg_{tid}');
+                            timerInterval = setInterval(function() {{
                                 if (remaining <= 0) {{
-                                    clearInterval(interval);
-                                    el.textContent = "00:00";
-                                    el.style.color = "#ff4444";
-                                    msg.textContent = "⚠️ SAIR DA OPERAÇÃO AGORA!";
-                                    if (window.playBeep) window.playBeep('put');
+                                    clearInterval(timerInterval);
+                                    el.textContent = '00:00';
+                                    el.style.color = '#ff4444';
+                                    msg.textContent = '⚠️ SAIR DA OPERAÇÃO AGORA!';
+                                    msg.style.color = '#ff4444';
+                                    playBeep('put');
+                                    document.getElementById('btn_{tid}').textContent = '✅ OPERAÇÃO ENCERRADA';
                                     return;
                                 }}
-                                var m = Math.floor(remaining / 60);
-                                var s = remaining % 60;
-                                el.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
-                                var pct = remaining / duration;
-                                el.style.color = pct > 0.4 ? '{bc}' : pct > 0.2 ? '#ffaa00' : '#ff4444';
-                                if (remaining <= 10) {{
-                                    msg.textContent = "🚨 Prepare-se para sair!";
-                                }} else if (remaining <= 30) {{
-                                    msg.textContent = "⚡ Atenção — finalizando em breve";
-                                }} else {{
-                                    msg.textContent = "✅ Operação em andamento";
-                                }}
+                                var m = Math.floor(remaining/60);
+                                var s = remaining%60;
+                                el.textContent = String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+                                var pct = remaining/duration;
+                                el.style.color = pct>0.4 ? '{bc}' : pct>0.2 ? '#ffaa00' : '#ff4444';
+                                if(remaining<=10) {{ msg.textContent='🚨 PREPARE-SE PARA SAIR!'; msg.style.color='#ff4444'; }}
+                                else if(remaining<=30) {{ msg.textContent='⚡ Finalizando em breve'; msg.style.color='#ffaa00'; }}
+                                else {{ msg.textContent='✅ Operação em andamento'; msg.style.color='#00ff88'; }}
                                 remaining--;
                             }}, 1000);
-                        }};
-                    }})();
-                    </script>
-                    """, unsafe_allow_html=True)
-                    st.toast(f"📡 {nome}: {acao} — {expiracao} ({score}/100)", icon="🚀" if dom=="CALL" else "⚠️")
-                else:
-                    best = max(sc, sp)
-                    st.markdown(f"""
-                    <div class="signal-wait">
-                        <div class="signal-title" style="color:#607090">⏳ AGUARDANDO...</div>
-                        <div style="color:#607090;font-size:0.75rem;margin-top:4px">Confluência: {best}/100</div>
-                        <div class="score-bar-bg"><div class="score-bar-fill" style="width:{best}%;background:#607090"></div></div>
-                    </div>""", unsafe_allow_html=True)
-                st.markdown("---")
+                        }}
+                        </script>
+                        """, height=160)
+
+                        st.toast(f"📡 {nome}: {acao} — {expiracao} ({score}/100)", icon="🚀" if dom=="CALL" else "⚠️")
+                    else:
+                        best = max(sc, sp)
+                        st.markdown(f"""
+                        <div class="signal-wait">
+                            <div class="signal-title" style="color:#607090">⏳ AGUARDANDO...</div>
+                            <div style="color:#607090;font-size:0.75rem;margin-top:4px">Confluência: {best}/100</div>
+                            <div class="score-bar-bg">
+                                <div class="score-bar-fill" style="width:{best}%;background:#607090"></div>
+                            </div>
+                        </div>""", unsafe_allow_html=True)
+                    st.markdown("---")
 
 # ══ GRÁFICO ═════════════════════════════════
 with tab_chart:
@@ -520,42 +535,45 @@ with tab_chart:
     with ca: chart_ativo = st.selectbox("Ativo", list(ATIVOS.keys()), key="ca")
     with ct: chart_tf    = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=1, key="ct")
     cp, ci = TIMEFRAMES[chart_tf]
-    with st.spinner("Carregando gráfico..."):
-        dfc = buscar_dados(ATIVOS[chart_ativo], cp, ci)
-    if dfc is not None and len(dfc) > 50:
-        try:
-            dfc = calcular_indicadores(dfc)
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.55,0.25,0.20],
-                                vertical_spacing=0.03,
-                                subplot_titles=[f"{chart_ativo} — Candles + EMAs + Bollinger","MACD","RSI (14)"])
-            fig.add_trace(go.Candlestick(x=dfc.index, open=dfc['Open'], high=dfc['High'],
-                low=dfc['Low'], close=dfc['Close'],
-                increasing_line_color='#00ff88', decreasing_line_color='#ff4444', name="Preço"), row=1, col=1)
-            for ema, color in [('EMA_8','#00ffcc'),('EMA_20','#ffaa00'),('EMA_50','#aa77ff')]:
-                fig.add_trace(go.Scatter(x=dfc.index, y=dfc[ema], line=dict(color=color,width=1.5),
-                    name=ema.replace('_',' ')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=dfc.index, y=dfc['BB_UPPER'],
-                line=dict(color='rgba(255,255,255,0.2)',width=1,dash='dot'), showlegend=False), row=1, col=1)
-            fig.add_trace(go.Scatter(x=dfc.index, y=dfc['BB_LOWER'],
-                line=dict(color='rgba(255,255,255,0.2)',width=1,dash='dot'),
-                fill='tonexty', fillcolor='rgba(255,255,255,0.03)', showlegend=False), row=1, col=1)
-            colors_h = ['#00ff88' if v >= 0 else '#ff4444' for v in dfc['MACD_HIST']]
-            fig.add_trace(go.Bar(x=dfc.index, y=dfc['MACD_HIST'], marker_color=colors_h, opacity=0.7, name="Hist"), row=2, col=1)
-            fig.add_trace(go.Scatter(x=dfc.index, y=dfc['MACD'], line=dict(color='#00ffcc',width=1.5), name="MACD"), row=2, col=1)
-            fig.add_trace(go.Scatter(x=dfc.index, y=dfc['MACD_SIGNAL'], line=dict(color='#ffaa00',width=1.5), name="Signal"), row=2, col=1)
-            fig.add_trace(go.Scatter(x=dfc.index, y=dfc['RSI'], line=dict(color='#aa77ff',width=2), name="RSI"), row=3, col=1)
-            fig.add_hline(y=70, line_dash="dash", line_color="#ff444455", row=3, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="#00ff8855", row=3, col=1)
-            fig.update_layout(template="plotly_dark", paper_bgcolor="#080b14", plot_bgcolor="#0d1520",
-                height=680, margin=dict(l=10,r=10,t=40,b=10), xaxis_rangeslider_visible=False,
-                legend=dict(orientation="h",yanchor="bottom",y=1.01,xanchor="right",x=1),
-                font=dict(family="Rajdhani"))
-            fig.update_xaxes(gridcolor="#1a2030"); fig.update_yaxes(gridcolor="#1a2030")
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Erro ao renderizar: {e}")
+
+    if st.button("📊 Carregar Gráfico", use_container_width=False):
+        with st.spinner("Carregando gráfico..."):
+            dfc = buscar_e_calcular(ATIVOS[chart_ativo], cp, ci)
+        if dfc is not None and len(dfc) > 50:
+            try:
+                fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.55,0.25,0.20],
+                                    vertical_spacing=0.03,
+                                    subplot_titles=[f"{chart_ativo} — Candles + EMAs + Bollinger","MACD","RSI (14)"])
+                fig.add_trace(go.Candlestick(x=dfc.index, open=dfc['Open'], high=dfc['High'],
+                    low=dfc['Low'], close=dfc['Close'],
+                    increasing_line_color='#00ff88', decreasing_line_color='#ff4444', name="Preço"), row=1, col=1)
+                for ema, color in [('EMA_8','#00ffcc'),('EMA_20','#ffaa00'),('EMA_50','#aa77ff')]:
+                    fig.add_trace(go.Scatter(x=dfc.index, y=dfc[ema], line=dict(color=color,width=1.5),
+                        name=ema.replace('_',' ')), row=1, col=1)
+                fig.add_trace(go.Scatter(x=dfc.index, y=dfc['BB_UPPER'],
+                    line=dict(color='rgba(255,255,255,0.2)',width=1,dash='dot'), showlegend=False), row=1, col=1)
+                fig.add_trace(go.Scatter(x=dfc.index, y=dfc['BB_LOWER'],
+                    line=dict(color='rgba(255,255,255,0.2)',width=1,dash='dot'),
+                    fill='tonexty', fillcolor='rgba(255,255,255,0.03)', showlegend=False), row=1, col=1)
+                colors_h = ['#00ff88' if v >= 0 else '#ff4444' for v in dfc['MACD_HIST']]
+                fig.add_trace(go.Bar(x=dfc.index, y=dfc['MACD_HIST'], marker_color=colors_h, opacity=0.7, name="Hist"), row=2, col=1)
+                fig.add_trace(go.Scatter(x=dfc.index, y=dfc['MACD'], line=dict(color='#00ffcc',width=1.5), name="MACD"), row=2, col=1)
+                fig.add_trace(go.Scatter(x=dfc.index, y=dfc['MACD_SIGNAL'], line=dict(color='#ffaa00',width=1.5), name="Signal"), row=2, col=1)
+                fig.add_trace(go.Scatter(x=dfc.index, y=dfc['RSI'], line=dict(color='#aa77ff',width=2), name="RSI"), row=3, col=1)
+                fig.add_hline(y=70, line_dash="dash", line_color="#ff444455", row=3, col=1)
+                fig.add_hline(y=30, line_dash="dash", line_color="#00ff8855", row=3, col=1)
+                fig.update_layout(template="plotly_dark", paper_bgcolor="#080b14", plot_bgcolor="#0d1520",
+                    height=680, margin=dict(l=10,r=10,t=40,b=10), xaxis_rangeslider_visible=False,
+                    legend=dict(orientation="h",yanchor="bottom",y=1.01,xanchor="right",x=1),
+                    font=dict(family="Rajdhani"))
+                fig.update_xaxes(gridcolor="#1a2030"); fig.update_yaxes(gridcolor="#1a2030")
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Erro ao renderizar: {e}")
+        else:
+            st.warning("Dados insuficientes. Tente outro ativo ou timeframe.")
     else:
-        st.warning("Dados insuficientes. Tente outro ativo ou timeframe.")
+        st.info("Selecione o ativo e timeframe, depois clique em **Carregar Gráfico**.")
 
 # ══ PERFORMANCE ══════════════════════════════
 with tab_perf:
@@ -590,7 +608,7 @@ with tab_perf:
             st.plotly_chart(fig_b, use_container_width=True)
         with cd:
             w = len(logs[logs['Resultado']=='WIN']); l = len(logs[logs['Resultado']=='LOSS'])
-            fig_pie = go.Figure(go.Pie(labels=["WIN","LOSS"], values=[w,l], hole=0.6,
+            fig_pie = go.Figure(go.Pie(labels=["WIN","LOSS"], values=[max(w,0),max(l,0)], hole=0.6,
                 marker_colors=['#00ff88','#ff4444'], textfont_size=14))
             fig_pie.update_layout(template="plotly_dark", paper_bgcolor="#080b14",
                 height=250, title="W/L", margin=dict(l=10,r=10,t=40,b=10))
