@@ -48,3 +48,9 @@ Modelo Freemium: Ofereça os sinais de 15min/1h gratuitamente e monetize os sina
 Sinais de Elite: Venda de licenças para ativos de alta performance como Ouro (XAUUSD) e Nasdaq (NAS100).
 
 Integração API: Preparado para futuras conexões com corretoras para automação de ordens (Copy-Trading).
+
+AVISO LEGAL: Este software é uma ferramenta de análise estatística. O mercado financeiro envolve riscos. Use a gestão de risco integrada para proteger seu capital.
+
+© 2026 Axwell Financial Technologies | Royal Capital Integration.
+
+Dica para monetização: Se você pretende vender o acesso, este README já passa a impressão de um produto caro e bem desenvolvido. Use o código que te passei anteriormente junto com este texto para criar um portfólio de respeito!
