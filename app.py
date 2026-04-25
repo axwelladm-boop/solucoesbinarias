@@ -6,11 +6,20 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 import numpy as np
 import streamlit.components.v1 as components
+import base64
 
 # ─────────────────────────────────────────────
-#  CONFIG
+#  CONFIGURAÇÕES DE PÁGINA
 # ─────────────────────────────────────────────
-st.set_page_config(page_title="Axwell Pro | Analista Sniper", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AXWELL PRO | Analista Sniper", layout="wide", initial_sidebar_state="expanded")
+
+# Função para converter imagem local para Base64 (Evita erro no GitHub)
+def get_image_base64(path):
+    try:
+        with open(path, "rb") as image_file:
+            return f"data:image/png;base64,{base64.b64encode(image_file.read()).decode()}"
+    except:
+        return ""
 
 st.markdown("""
 <style>
@@ -20,6 +29,7 @@ html,body,[class*="css"]{font-family:'Rajdhani',sans-serif;color:#e0e0e0;}
 .axwell-header{text-align:center;padding:18px 0 8px;border-bottom:1px solid #00ffcc33;margin-bottom:24px;}
 .axwell-header h1{font-family:'Orbitron',monospace;font-size:2.2rem;font-weight:900;color:#00ffcc;letter-spacing:4px;margin:0;text-shadow:0 0 20px #00ffcc66;}
 .axwell-header p{color:#607090;font-size:0.85rem;margin-top:4px;letter-spacing:2px;}
+.logo-img { max-width: 280px; margin-bottom: 10px; filter: drop-shadow(0 0 10px #00ffcc33); }
 .metric-card{background:linear-gradient(135deg,#0d1520 60%,#0a1a1a);border:1px solid #00ffcc33;border-radius:12px;padding:16px 20px;margin-bottom:8px;}
 .metric-card .label{color:#607090;font-size:0.75rem;letter-spacing:1px;text-transform:uppercase;}
 .metric-card .value{font-family:'Orbitron',monospace;font-size:1.5rem;color:#00ffcc;font-weight:700;}
@@ -35,10 +45,6 @@ html,body,[class*="css"]{font-family:'Rajdhani',sans-serif;color:#e0e0e0;}
 .badge-medio{background:#ffaa0022;color:#ffaa00;border:1px solid #ffaa00;}
 .badge-baixo{background:#00ff8822;color:#00ff88;border:1px solid #00ff88;}
 section[data-testid="stSidebar"]{background:#0a0e18;border-right:1px solid #1a2030;}
-.stTabs [data-baseweb="tab-list"]{background:#0a0e18;border-bottom:1px solid #1a2030;}
-.stTabs [data-baseweb="tab"]{font-family:'Rajdhani',sans-serif;color:#607090;}
-.stTabs [aria-selected="true"]{color:#00ffcc !important;border-bottom:2px solid #00ffcc !important;background:#0d1520;}
-.stButton>button{border-radius:8px;font-family:'Orbitron',monospace;font-size:0.8rem;font-weight:700;letter-spacing:1px;height:3.2em;border:none;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -47,625 +53,139 @@ section[data-testid="stSidebar"]{background:#0a0e18;border-right:1px solid #1a20
 # ─────────────────────────────────────────────
 BANCA_INICIAL = 70.0
 
-def init_state():
-    defaults = {
+if 'banca' not in st.session_state:
+    st.session_state.update({
         'banca': BANCA_INICIAL, 'banca_max': BANCA_INICIAL,
         'total_wins': 0, 'total_losses': 0,
         'sequencia': 0, 'melhor_sequencia': 0, 'pior_sequencia': 0,
         'logs': pd.DataFrame(columns=['Hora','Ativo','Direção','Resultado','Valor','P&L','Saldo']),
         'resultados_sniper': {},
         'analisado': False,
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-init_state()
+    })
 
 # ─────────────────────────────────────────────
-#  INDICADORES MANUAIS
+#  INDICADORES TÉCNICOS
 # ─────────────────────────────────────────────
-def calc_rsi(s, p=14):
-    d = s.diff()
-    g = d.clip(lower=0).rolling(p).mean()
-    l = (-d.clip(upper=0)).rolling(p).mean()
-    rs = g / l.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
-
-def calc_ema(s, span):
-    return s.ewm(span=span, adjust=False).mean()
-
-def calc_macd(s):
-    e12 = calc_ema(s, 12); e26 = calc_ema(s, 26)
-    macd = e12 - e26; sig = calc_ema(macd, 9)
-    return macd, sig, macd - sig
-
-def calc_bbands(s, p=20, std=2):
-    m = s.rolling(p).mean(); sigma = s.rolling(p).std()
-    return m + std*sigma, m, m - std*sigma
-
-def calc_stoch(h, l, c, k=14, d=3):
-    lo = l.rolling(k).min(); hi = h.rolling(k).max()
-    sk = 100 * (c - lo) / (hi - lo).replace(0, np.nan)
-    return sk, sk.rolling(d).mean()
-
-def calc_atr(h, l, c, p=14):
-    tr = pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
-    return tr.rolling(p).mean()
-
 def calcular_indicadores(df):
     c = df['Close']; h = df['High']; l = df['Low']
     df = df.copy()
-    df['RSI']  = calc_rsi(c)
-    df['EMA_8']  = calc_ema(c, 8)
-    df['EMA_20'] = calc_ema(c, 20)
-    df['EMA_50'] = calc_ema(c, 50)
-    df['MACD'], df['MACD_SIGNAL'], df['MACD_HIST'] = calc_macd(c)
-    df['BB_UPPER'], df['BB_MID'], df['BB_LOWER'] = calc_bbands(c)
-    df['STOCH_K'], df['STOCH_D'] = calc_stoch(h, l, c)
-    df['ATR'] = calc_atr(h, l, c)
+    # RSI
+    delta = c.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    df['RSI'] = 100 - (100 / (1 + rs))
+    # EMAs
+    df['EMA_8'] = c.ewm(span=8, adjust=False).mean()
+    df['EMA_20'] = c.ewm(span=20, adjust=False).mean()
+    df['EMA_50'] = c.ewm(span=50, adjust=False).mean()
+    # MACD
+    e12 = c.ewm(span=12, adjust=False).mean()
+    e26 = c.ewm(span=26, adjust=False).mean()
+    df['MACD'] = e12 - e26
+    df['MACD_SIGNAL'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['MACD_HIST'] = df['MACD'] - df['MACD_SIGNAL']
+    # BB
+    m = c.rolling(20).mean(); s = c.rolling(20).std()
+    df['BB_UPPER'], df['BB_LOWER'] = m + 2*s, m - 2*s
+    # Outros
+    lo = l.rolling(14).min(); hi = h.rolling(14).max()
+    df['STOCH_K'] = 100 * (c - lo) / (hi - lo).replace(0, np.nan)
+    df['ATR'] = pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1).rolling(14).mean()
     return df.dropna()
 
 # ─────────────────────────────────────────────
-#  SESSÕES DE MERCADO
-# ─────────────────────────────────────────────
-SESSOES = {
-    "Ásia":      (0,  9,  "#aa77ff"),
-    "Londres":   (8,  17, "#00ffcc"),
-    "Nova York": (13, 22, "#ffaa00"),
-}
-MELHORES_JANELAS = [
-    (8,  9,  "Abertura Londres",        "#00ffcc"),
-    (13, 17, "Overlap Londres + NY 🔥", "#00ff88"),
-    (20, 22, "Fechamento NY",           "#ffaa00"),
-]
-
-def status_mercado():
-    agora    = datetime.utcnow()
-    hora_utc = agora.hour + agora.minute / 60
-    hora_brt = (hora_utc - 3) % 24
-    ativas, cores = [], []
-    for nome, (ini, fim, cor) in SESSOES.items():
-        if ini <= hora_utc < fim:
-            ativas.append(nome); cores.append(cor)
-    qualidade = "🔴 BAIXA"; q_cor = "#ff4444"; descricao = "Baixa liquidez"
-    for ini, fim, desc, cor in MELHORES_JANELAS:
-        if ini <= hora_utc < fim:
-            qualidade = "🟢 ALTA" if "Overlap" in desc or "Abertura" in desc else "🟡 MÉDIA"
-            q_cor = cor; descricao = desc; break
-    if not ativas:
-        qualidade = "⚫ FECHADO"; q_cor = "#607090"; descricao = "Mercados fechados"
-    proxima = None
-    for ini, fim, desc, cor in MELHORES_JANELAS:
-        ini_brt = (ini - 3) % 24
-        if hora_brt < ini_brt:
-            proxima = f"{desc} às {ini_brt:02.0f}h (Brasília)"; break
-    if not proxima:
-        proxima = "Overlap Londres+NY amanhã às 10h (Brasília)"
-    return ativas, qualidade, q_cor, descricao, proxima, hora_brt
-
-# ─────────────────────────────────────────────
-#  DADOS
-# ─────────────────────────────────────────────
-ATIVOS = {
-    "EURUSD":"EURUSD=X","GBPUSD":"GBPUSD=X","USDJPY":"JPY=X","AUDUSD":"AUDUSD=X",
-    "BTC/USD":"BTC-USD","ETH/USD":"ETH-USD","SOL/USD":"SOL-USD",
-    "Ouro":"GC=F","Petróleo":"CL=F","S&P 500":"^GSPC","Nasdaq":"^IXIC",
-}
-TIMEFRAMES = {"1 min":("1d","1m"),"5 min":("5d","5m"),"15 min":("1mo","15m"),"1 hora":("3mo","1h")}
-EXPIRACAO_SEG = {"30 segundos":30,"1 minuto":60,"2 minutos":120,"5 minutos":300,"30 minutos":1800}
-
-def buscar_e_calcular(ticker, period, interval):
-    try:
-        df = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
-        if df.empty or len(df) < 50:
-            return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df = df[['Open','High','Low','Close','Volume']].copy()
-        df = df.apply(pd.to_numeric, errors='coerce').dropna()
-        return calcular_indicadores(df)
-    except Exception:
-        return None
-
-# ─────────────────────────────────────────────
-#  SCORE
+#  LOGICA DE SCORE & STATUS
 # ─────────────────────────────────────────────
 def calcular_score(df):
     if df is None or len(df) < 2: return 0, 0
-    row = df.iloc[-1]; prev = df.iloc[-2]
-    sc = sp = 0
-    def flt(col, default=0):
-        v = row.get(col, default)
-        return float(v) if not pd.isna(v) else default
-    def flt2(col, default=0):
-        v = prev.get(col, default)
-        return float(v) if not pd.isna(v) else default
-
-    rsi = flt('RSI', 50)
-    if rsi < 30: sc += 20
-    elif rsi < 40: sc += 10
-    elif rsi > 70: sp += 20
-    elif rsi > 60: sp += 10
-
-    if flt('EMA_8') > flt('EMA_20'): sc += 15
-    else: sp += 15
-    if flt('EMA_20') > flt('EMA_50'): sc += 10
-    else: sp += 10
-
-    h_now = flt('MACD_HIST'); h_prev = flt2('MACD_HIST')
-    if h_now > 0 and h_now > h_prev: sc += 20
-    elif h_now < 0 and h_now < h_prev: sp += 20
-
-    close = flt('Close'); bbl = flt('BB_LOWER'); bbu = flt('BB_UPPER')
-    if bbl and close < bbl * 1.001: sc += 20
-    elif bbu and close > bbu * 0.999: sp += 20
-
-    k = flt('STOCH_K', 50); d = flt('STOCH_D', 50)
-    if k < 20 and k > d: sc += 15
-    elif k > 80 and k < d: sp += 15
-
+    row = df.iloc[-1]; sc = sp = 0
+    if row['RSI'] < 30: sc += 30
+    elif row['RSI'] > 70: sp += 30
+    if row['EMA_8'] > row['EMA_20']: sc += 20
+    else: sp += 20
+    if row['MACD_HIST'] > 0: sc += 25
+    else: sp += 25
+    if row['Close'] < row['BB_LOWER']: sc += 25
+    elif row['Close'] > row['BB_UPPER']: sp += 25
     return min(sc, 100), min(sp, 100)
 
-# ─────────────────────────────────────────────
-#  HELPERS
-# ─────────────────────────────────────────────
-def kelly_fraction(wr, pay):
-    if wr <= 0 or pay <= 0: return 0.0
-    return max(0.0, (wr * pay - (1 - wr)) / pay)
-
-def risco_banca(banca, entrada):
-    pct = (entrada / banca * 100) if banca > 0 else 0
-    if pct > 5: return "ALTO","badge-alto"
-    if pct > 2: return "MÉDIO","badge-medio"
-    return "BAIXO","badge-baixo"
-
-def drawdown_atual():
-    bmax = st.session_state.banca_max
-    return ((bmax - st.session_state.banca) / bmax * 100) if bmax > 0 else 0.0
-
-def registrar_op(ativo, direcao, resultado, valor, payout_pct):
-    pnl = valor * (payout_pct/100) if resultado == "WIN" else -valor
-    st.session_state.banca += pnl
-    st.session_state.banca_max = max(st.session_state.banca_max, st.session_state.banca)
-    if resultado == "WIN":
-        st.session_state.total_wins += 1
-        st.session_state.sequencia = max(0, st.session_state.sequencia) + 1
-        st.session_state.melhor_sequencia = max(st.session_state.melhor_sequencia, st.session_state.sequencia)
-    else:
-        st.session_state.total_losses += 1
-        st.session_state.sequencia = min(0, st.session_state.sequencia) - 1
-        st.session_state.pior_sequencia = min(st.session_state.pior_sequencia, st.session_state.sequencia)
-    nova = {'Hora': datetime.now().strftime("%H:%M:%S"), 'Ativo': ativo, 'Direção': direcao,
-            'Resultado': resultado, 'Valor': valor, 'P&L': round(pnl, 2), 'Saldo': round(st.session_state.banca, 2)}
-    st.session_state.logs = pd.concat([st.session_state.logs, pd.DataFrame([nova])], ignore_index=True)
-
-def mcard(label, value, delta="", dc="#607090"):
-    d = f'<div class="delta" style="color:{dc}">{delta}</div>' if delta else ""
-    return f'<div class="metric-card"><div class="label">{label}</div><div class="value">{value}</div>{d}</div>'
+def status_mercado():
+    agora = datetime.utcnow()
+    h = agora.hour + agora.minute/60
+    # Simplificação para exemplo
+    if 10 <= h <= 14: return ["Londres", "NY"], "🟢 ALTA", "#00ffcc", "Overlap Ativo", h-3
+    return ["Ásia"], "🟡 MÉDIA", "#ffaa00", "Liquidez Normal", h-3
 
 # ─────────────────────────────────────────────
-#  HEADER
+#  SIDEBAR & HEADER
 # ─────────────────────────────────────────────
-st.markdown("""
+logo_b64 = get_image_base64("logo.png")
+header_html = f"""
 <div class="axwell-header">
-    <h1>⬡ AXWELL PRO</h1>
-    <p>ANALISTA SNIPER v4.0 &nbsp;|&nbsp; ROYAL CAPITAL &nbsp;|&nbsp; INTELIGÊNCIA QUANTITATIVA</p>
-</div>""", unsafe_allow_html=True)
+    {f'<img src="{logo_b64}" class="logo-img">' if logo_b64 else '<h1>⬡ AXWELL PRO</h1>'}
+    <p>SISTEMA DE INTELIGÊNCIA QUANTITATIVA | AX SOLUÇÕES BINÁRIAS</p>
+</div>"""
+st.markdown(header_html, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-#  SIDEBAR
-# ─────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### 🛡️ GESTÃO DE BANCA")
-    total_ops = st.session_state.total_wins + st.session_state.total_losses
-    win_rate  = st.session_state.total_wins / total_ops if total_ops > 0 else 0
-    dd        = drawdown_atual()
-    banca_delta = st.session_state.banca - BANCA_INICIAL
-    dc = "#00ff88" if banca_delta >= 0 else "#ff4444"
-    ds = f"{'▲' if banca_delta >= 0 else '▼'} ${abs(banca_delta):.2f} ({banca_delta/BANCA_INICIAL*100:+.1f}%)"
-    st.markdown(mcard("Saldo Atual", f"${st.session_state.banca:.2f}", ds, dc), unsafe_allow_html=True)
-
-    c1, c2 = st.columns(2)
-    with c1:
-        ddc = "#ff4444" if dd>15 else "#ffaa00" if dd>8 else "#00ff88"
-        st.markdown(mcard("Drawdown", f"{dd:.1f}%", dc=ddc), unsafe_allow_html=True)
-    with c2:
-        wrc = "#00ff88" if win_rate>=0.6 else "#ffaa00" if win_rate>=0.4 else "#ff4444"
-        st.markdown(mcard("Win Rate", f"{win_rate*100:.0f}%", dc=wrc), unsafe_allow_html=True)
-
+    st.metric("Saldo Atual", f"${st.session_state.banca:.2f}", f"{st.session_state.banca - BANCA_INICIAL:+.2f}")
+    
     st.divider()
-    st.markdown("### ⚙️ PARÂMETROS")
-    ativos_sel  = st.multiselect("Ativos Monitorados", list(ATIVOS.keys()), default=["EURUSD","BTC/USD"])
-    tf_sel      = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=1)
-    val_entrada = st.number_input("Entrada ($)", 1.0, 100.0, 2.0, step=0.5)
-    payout_pct  = st.slider("Payout (%)", 70, 95, 89)
-    expiracao   = st.selectbox("⏱ Tempo de Expiração", ["30 segundos","1 minuto","2 minutos","5 minutos","30 minutos"], index=1)
-    period, interval = TIMEFRAMES[tf_sel]
-
-    kf = kelly_fraction(win_rate, payout_pct/100)
-    kv = st.session_state.banca * kf
-    rl, rb = risco_banca(st.session_state.banca, val_entrada)
-    st.markdown(f"""
-    <div style="padding:10px 14px;background:#0d1520;border-radius:8px;border:1px solid #1a2030;margin-top:8px">
-        <span style="color:#607090;font-size:0.72rem;letter-spacing:1px">KELLY CRITERION</span>
-        <div style="font-family:'Orbitron',monospace;color:#00ffcc;font-size:1rem;margin:4px 0">${kv:.2f}
-            <span style="font-size:0.75rem;color:#607090">({kf*100:.1f}%)</span></div>
-        <span class="badge {rb}">Risco: {rl}</span>
-    </div>""", unsafe_allow_html=True)
-
-    if dd >= 20: st.error("⛔ DRAWDOWN CRÍTICO — Pause!")
-    elif dd >= 10: st.warning("⚠️ Drawdown elevado.")
-
-    st.divider()
-    st.markdown("### 📋 LANÇAR RESULTADO")
-    ativo_manual = st.selectbox("Ativo", list(ATIVOS.keys()))
-    dir_manual   = st.radio("Direção", ["CALL ▲","PUT ▼"], horizontal=True)
-    cw, cl = st.columns(2)
-    if cw.button("✅ WIN",  use_container_width=True):
-        registrar_op(ativo_manual, dir_manual, "WIN",  val_entrada, payout_pct); st.balloons(); st.rerun()
-    if cl.button("❌ LOSS", use_container_width=True):
-        registrar_op(ativo_manual, dir_manual, "LOSS", val_entrada, payout_pct); st.rerun()
-
-    st.divider()
-    if st.button("🔄 Resetar Banca", use_container_width=True):
-        for k in ['banca','banca_max','total_wins','total_losses','sequencia',
-                  'melhor_sequencia','pior_sequencia','logs','resultados_sniper','analisado']:
-            del st.session_state[k]
+    ativos_sel = st.multiselect("Ativos", ["EURUSD=X", "GBPUSD=X", "BTC-USD", "ETH-USD"], default=["EURUSD=X", "BTC-USD"])
+    tf_sel = st.selectbox("Timeframe", ["1m", "5m", "15m", "1h"], index=1)
+    val_entrada = st.number_input("Entrada ($)", 1.0, 1000.0, 2.0)
+    payout_pct = st.slider("Payout %", 70, 95, 87)
+    
+    if st.button("🔄 Resetar Sistema"):
+        st.session_state.clear()
         st.rerun()
 
 # ─────────────────────────────────────────────
-#  ABAS
+#  CONTEÚDO PRINCIPAL (TABS)
 # ─────────────────────────────────────────────
-tab_sniper, tab_chart, tab_perf, tab_risco = st.tabs([
-    "🎯 Sniper Board","📊 Gráfico Avançado","📈 Performance","🛡️ Gestão de Risco"])
+tab1, tab2, tab3 = st.tabs(["🎯 Sniper Board", "📊 Gráficos", "📈 Performance"])
 
-# ══ SNIPER ══════════════════════════════════
-with tab_sniper:
-
-    # ── PAINEL SESSÕES ──
-    ativas, qualidade, q_cor, descricao, proxima, hora_brt = status_mercado()
-    sessoes_str = " · ".join(ativas) if ativas else "Nenhuma"
-    hora_fmt = f"{int(hora_brt):02d}:{int((hora_brt % 1)*60):02d}"
-    st.markdown(f"""
-    <div style="background:linear-gradient(135deg,#0d1520,#0a1525);border:1px solid #1a2030;
-                border-left:4px solid {q_cor};border-radius:12px;padding:16px 20px;margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
-            <div>
-                <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">🕐 HORA BRASÍLIA</div>
-                <div style="font-family:'Orbitron',monospace;font-size:1.4rem;color:#fff;font-weight:700">{hora_fmt}</div>
-            </div>
-            <div>
-                <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">📡 SESSÕES ATIVAS</div>
-                <div style="font-family:'Orbitron',monospace;font-size:0.9rem;color:#00ffcc">{sessoes_str}</div>
-            </div>
-            <div>
-                <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">⚡ QUALIDADE</div>
-                <div style="font-family:'Orbitron',monospace;font-size:1rem;font-weight:700;color:{q_cor}">{qualidade}</div>
-                <div style="color:#607090;font-size:0.75rem">{descricao}</div>
-            </div>
-            <div>
-                <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">⏭ PRÓXIMA JANELA</div>
-                <div style="color:#e0e0e0;font-size:0.82rem">{proxima}</div>
-            </div>
-        </div>
-        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-            <span style="background:#aa77ff22;color:#aa77ff;border:1px solid #aa77ff44;padding:2px 10px;border-radius:20px;font-size:0.72rem">🌏 ÁSIA 20h–05h</span>
-            <span style="background:#00ffcc22;color:#00ffcc;border:1px solid #00ffcc44;padding:2px 10px;border-radius:20px;font-size:0.72rem">🇬🇧 LONDRES 05h–14h</span>
-            <span style="background:#ffaa0022;color:#ffaa00;border:1px solid #ffaa0044;padding:2px 10px;border-radius:20px;font-size:0.72rem">🇺🇸 NOVA YORK 10h–19h</span>
-            <span style="background:#00ff8822;color:#00ff88;border:1px solid #00ff8844;padding:2px 10px;border-radius:20px;font-size:0.72rem">🔥 MELHOR: 10h–14h BRT</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    if not ativos_sel:
-        st.info("Selecione ao menos um ativo na sidebar.")
-    else:
-        # ── BOTÃO DE ANÁLISE — dados só são buscados aqui ──
-        col_btn, col_info = st.columns([1, 3])
-        with col_btn:
-            analisar = st.button("🔍 ANALISAR AGORA", use_container_width=True)
-        with col_info:
-            st.caption(f"Timeframe: **{tf_sel}** | Expiração: **{expiracao}** | {datetime.now().strftime('%H:%M:%S')}")
-
-        if analisar:
-            st.session_state.analisado = True
-            st.session_state.resultados_sniper = {}
-            with st.spinner("🔄 Buscando dados e calculando sinais..."):
-                for nome in ativos_sel:
-                    df = buscar_e_calcular(ATIVOS[nome], period, interval)
-                    st.session_state.resultados_sniper[nome] = df
-
-        if not st.session_state.analisado:
-            st.markdown("""
-            <div style="text-align:center;padding:40px;background:#0d1520;border-radius:12px;border:1px dashed #1a2030;margin-top:16px">
-                <div style="font-family:'Orbitron',monospace;font-size:1.1rem;color:#607090;letter-spacing:2px">
-                    🎯 PRONTO PARA ANALISAR
-                </div>
-                <div style="color:#607090;font-size:0.85rem;margin-top:8px">
-                    Selecione os ativos e clique em <b style="color:#00ffcc">ANALISAR AGORA</b>
-                </div>
-            </div>""", unsafe_allow_html=True)
-        else:
-            resultados = st.session_state.resultados_sniper
-            cols = st.columns(min(len(ativos_sel), 3))
-            sinais_ativos = []
-
-            for i, nome in enumerate(ativos_sel):
-                col = cols[i % len(cols)]
-                df  = resultados.get(nome)
-                with col:
-                    if df is None:
-                        st.warning(f"Sem dados: {nome}"); continue
-
+with tab1:
+    ativas, qual, q_cor, desc, h_br = status_mercado()
+    st.markdown(f"""<div style='border-left:4px solid {q_cor}; padding-left:15px;'>
+                <h4>Mercado: {qual}</h4><p>{desc} | Sessões: {', '.join(ativas)}</p></div>""", unsafe_allow_html=True)
+    
+    if st.button("🔍 ESCANEAR MERCADO AGORA"):
+        with st.spinner("Analisando confluências..."):
+            for ativo in ativos_sel:
+                df = yf.download(ativo, period="1d", interval=tf_sel, progress=False)
+                if not df.empty:
+                    df = calcular_indicadores(df)
                     sc, sp = calcular_score(df)
-                    last = df.iloc[-1]; prev = df.iloc[-2]
-                    close = float(last['Close']); pct = (close/float(prev['Close'])-1)*100
-                    dc2 = "#00ff88" if pct >= 0 else "#ff4444"
-                    st.markdown(mcard(ATIVOS[nome], f"{close:.5f}", f"{'▲' if pct>=0 else '▼'} {abs(pct):.3f}%", dc2), unsafe_allow_html=True)
+                    
+                    col_a, col_b = st.columns([1, 2])
+                    with col_a:
+                        st.subheader(ativo)
+                        st.write(f"Preço: {df['Close'].iloc[-1]:.5f}")
+                    with col_b:
+                        if sc > 70:
+                            st.markdown(f'<div class="signal-call"><span class="signal-title">💎 COMPRA FORTE (CALL)</span><br>Score: {sc}/100</div>', unsafe_allow_html=True)
+                        elif sp > 70:
+                            st.markdown(f'<div class="signal-put"><span class="signal-title">📉 VENDA FORTE (PUT)</span><br>Score: {sp}/100</div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown('<div class="signal-wait">Aguardando sinal claro...</div>', unsafe_allow_html=True)
+                    st.divider()
 
-                    rsi_v = float(last['RSI']); mh = float(last['MACD_HIST'])
-                    atr_v = float(last['ATR']); stk = float(last['STOCH_K'])
-                    a, b = st.columns(2)
-                    with a:
-                        rc = "#00ff88" if rsi_v<35 else "#ff4444" if rsi_v>65 else "#e0e0e0"
-                        st.markdown(f"<small style='color:#607090'>RSI 14</small><br><b style='color:{rc}'>{rsi_v:.1f}</b>", unsafe_allow_html=True)
-                        st.markdown(f"<small style='color:#607090'>STOCH K</small><br><b>{stk:.1f}</b>", unsafe_allow_html=True)
-                    with b:
-                        mc2 = "#00ff88" if mh>0 else "#ff4444"
-                        st.markdown(f"<small style='color:#607090'>MACD Hist</small><br><b style='color:{mc2}'>{mh:.5f}</b>", unsafe_allow_html=True)
-                        st.markdown(f"<small style='color:#607090'>ATR</small><br><b>{atr_v:.5f}</b>", unsafe_allow_html=True)
+with tab2:
+    if ativos_sel:
+        ativo_graf = st.selectbox("Ver Gráfico", ativos_sel)
+        df_g = yf.download(ativo_graf, period="1d", interval=tf_sel)
+        if not df_g.empty:
+            fig = go.Figure(data=[go.Candlestick(x=df_g.index, open=df_g['Open'], high=df_g['High'], low=df_g['Low'], close=df_g['Close'])])
+            fig.update_layout(template="plotly_dark", height=500, margin=dict(l=0,r=0,b=0,t=0))
+            st.plotly_chart(fig, use_container_width=True)
 
-                    if sc >= 65 or sp >= 65:
-                        dom   = "CALL" if sc >= sp else "PUT"
-                        score = sc if dom=="CALL" else sp
-                        css   = "signal-call" if dom=="CALL" else "signal-put"
-                        icon  = "💎 CALL ▲" if dom=="CALL" else "📉 PUT ▼"
-                        bc    = "#00ff88" if dom=="CALL" else "#ff4444"
-                        acao  = "🟢 COMPRA" if dom=="CALL" else "🔴 VENDA"
-                        seg   = EXPIRACAO_SEG.get(expiracao, 60)
-                        tid   = f"t_{i}"
-                        sinais_ativos.append((nome, dom, score))
-
-                        st.markdown(f"""
-                        <div class="{css}">
-                            <div class="signal-title">{icon}</div>
-                            <div style="font-family:'Orbitron',monospace;font-size:1.6rem;font-weight:900;
-                                        color:{bc};margin:6px 0;letter-spacing:2px">{acao}</div>
-                            <div style="color:#607090;font-size:0.75rem">Score de Confluência</div>
-                            <div style="font-family:'Orbitron',monospace;font-size:1.2rem;color:{bc}">{score}/100</div>
-                            <div class="score-bar-bg">
-                                <div class="score-bar-fill" style="width:{score}%;background:{bc}"></div>
-                            </div>
-                            <div style="margin-top:8px;padding:6px 10px;background:rgba(0,0,0,0.3);
-                                        border-radius:6px;text-align:center">
-                                <span style="color:#607090;font-size:0.72rem;letter-spacing:1px">⏱ EXPIRAÇÃO</span><br>
-                                <span style="font-family:'Orbitron',monospace;color:#fff;font-size:1rem;
-                                             font-weight:700">{expiracao.upper()}</span>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        # Timer + Som via components.html
-                        components.html(f"""
-                        <div style="background:rgba(0,0,0,0.5);border:1px solid {bc}44;border-radius:8px;
-                                    padding:12px;text-align:center;font-family:monospace;margin-top:4px">
-                            <div style="color:#607090;font-size:11px;letter-spacing:1px;margin-bottom:4px">
-                                ⏳ TEMPO NA OPERAÇÃO
-                            </div>
-                            <div id="timer_{tid}" style="font-size:2.2rem;font-weight:900;color:{bc};
-                                                         letter-spacing:2px">--:--</div>
-                            <div id="msg_{tid}" style="font-size:11px;color:#607090;margin:4px 0 8px"></div>
-                            <button id="btn_{tid}" onclick="startTimer()"
-                                style="background:{bc};color:#000;border:none;border-radius:6px;
-                                       padding:8px 20px;font-weight:900;font-size:12px;
-                                       cursor:pointer;letter-spacing:1px;width:100%">
-                                ▶ ENTRAR AGORA + ALERTA SONORO
-                            </button>
-                        </div>
-                        <script>
-                        var duration = {seg};
-                        var timerInterval = null;
-                        function playBeep(type) {{
-                            try {{
-                                var ctx = new (window.AudioContext || window.webkitAudioContext)();
-                                var freqs = type==='call' ? [880,1100,1320] : [660,440,330];
-                                freqs.forEach(function(f, idx) {{
-                                    var osc = ctx.createOscillator();
-                                    var gain = ctx.createGain();
-                                    osc.connect(gain); gain.connect(ctx.destination);
-                                    osc.frequency.value = f;
-                                    gain.gain.setValueAtTime(0.35, ctx.currentTime + idx*0.18);
-                                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx*0.18 + 0.3);
-                                    osc.start(ctx.currentTime + idx*0.18);
-                                    osc.stop(ctx.currentTime + idx*0.18 + 0.3);
-                                }});
-                            }} catch(e) {{}}
-                        }}
-                        function startTimer() {{
-                            if (timerInterval) clearInterval(timerInterval);
-                            playBeep('{dom.lower()}');
-                            document.getElementById('btn_{tid}').textContent = '⏸ OPERAÇÃO ATIVA';
-                            document.getElementById('btn_{tid}').style.opacity = '0.6';
-                            document.getElementById('btn_{tid}').disabled = true;
-                            var remaining = duration;
-                            var el  = document.getElementById('timer_{tid}');
-                            var msg = document.getElementById('msg_{tid}');
-                            timerInterval = setInterval(function() {{
-                                if (remaining <= 0) {{
-                                    clearInterval(timerInterval);
-                                    el.textContent = '00:00';
-                                    el.style.color = '#ff4444';
-                                    msg.textContent = '⚠️ SAIR DA OPERAÇÃO AGORA!';
-                                    msg.style.color = '#ff4444';
-                                    playBeep('put');
-                                    document.getElementById('btn_{tid}').textContent = '✅ OPERAÇÃO ENCERRADA';
-                                    return;
-                                }}
-                                var m = Math.floor(remaining/60);
-                                var s = remaining%60;
-                                el.textContent = String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
-                                var pct = remaining/duration;
-                                el.style.color = pct>0.4 ? '{bc}' : pct>0.2 ? '#ffaa00' : '#ff4444';
-                                if(remaining<=10) {{ msg.textContent='🚨 PREPARE-SE PARA SAIR!'; msg.style.color='#ff4444'; }}
-                                else if(remaining<=30) {{ msg.textContent='⚡ Finalizando em breve'; msg.style.color='#ffaa00'; }}
-                                else {{ msg.textContent='✅ Operação em andamento'; msg.style.color='#00ff88'; }}
-                                remaining--;
-                            }}, 1000);
-                        }}
-                        </script>
-                        """, height=160)
-
-                        st.toast(f"📡 {nome}: {acao} — {expiracao} ({score}/100)", icon="🚀" if dom=="CALL" else "⚠️")
-                    else:
-                        best = max(sc, sp)
-                        st.markdown(f"""
-                        <div class="signal-wait">
-                            <div class="signal-title" style="color:#607090">⏳ AGUARDANDO...</div>
-                            <div style="color:#607090;font-size:0.75rem;margin-top:4px">Confluência: {best}/100</div>
-                            <div class="score-bar-bg">
-                                <div class="score-bar-fill" style="width:{best}%;background:#607090"></div>
-                            </div>
-                        </div>""", unsafe_allow_html=True)
-                    st.markdown("---")
-
-# ══ GRÁFICO ═════════════════════════════════
-with tab_chart:
-    ca, ct = st.columns([2,1])
-    with ca: chart_ativo = st.selectbox("Ativo", list(ATIVOS.keys()), key="ca")
-    with ct: chart_tf    = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=1, key="ct")
-    cp, ci = TIMEFRAMES[chart_tf]
-
-    if st.button("📊 Carregar Gráfico", use_container_width=False):
-        with st.spinner("Carregando gráfico..."):
-            dfc = buscar_e_calcular(ATIVOS[chart_ativo], cp, ci)
-        if dfc is not None and len(dfc) > 50:
-            try:
-                fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.55,0.25,0.20],
-                                    vertical_spacing=0.03,
-                                    subplot_titles=[f"{chart_ativo} — Candles + EMAs + Bollinger","MACD","RSI (14)"])
-                fig.add_trace(go.Candlestick(x=dfc.index, open=dfc['Open'], high=dfc['High'],
-                    low=dfc['Low'], close=dfc['Close'],
-                    increasing_line_color='#00ff88', decreasing_line_color='#ff4444', name="Preço"), row=1, col=1)
-                for ema, color in [('EMA_8','#00ffcc'),('EMA_20','#ffaa00'),('EMA_50','#aa77ff')]:
-                    fig.add_trace(go.Scatter(x=dfc.index, y=dfc[ema], line=dict(color=color,width=1.5),
-                        name=ema.replace('_',' ')), row=1, col=1)
-                fig.add_trace(go.Scatter(x=dfc.index, y=dfc['BB_UPPER'],
-                    line=dict(color='rgba(255,255,255,0.2)',width=1,dash='dot'), showlegend=False), row=1, col=1)
-                fig.add_trace(go.Scatter(x=dfc.index, y=dfc['BB_LOWER'],
-                    line=dict(color='rgba(255,255,255,0.2)',width=1,dash='dot'),
-                    fill='tonexty', fillcolor='rgba(255,255,255,0.03)', showlegend=False), row=1, col=1)
-                colors_h = ['#00ff88' if v >= 0 else '#ff4444' for v in dfc['MACD_HIST']]
-                fig.add_trace(go.Bar(x=dfc.index, y=dfc['MACD_HIST'], marker_color=colors_h, opacity=0.7, name="Hist"), row=2, col=1)
-                fig.add_trace(go.Scatter(x=dfc.index, y=dfc['MACD'], line=dict(color='#00ffcc',width=1.5), name="MACD"), row=2, col=1)
-                fig.add_trace(go.Scatter(x=dfc.index, y=dfc['MACD_SIGNAL'], line=dict(color='#ffaa00',width=1.5), name="Signal"), row=2, col=1)
-                fig.add_trace(go.Scatter(x=dfc.index, y=dfc['RSI'], line=dict(color='#aa77ff',width=2), name="RSI"), row=3, col=1)
-                fig.add_hline(y=70, line_dash="dash", line_color="#ff444455", row=3, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color="#00ff8855", row=3, col=1)
-                fig.update_layout(template="plotly_dark", paper_bgcolor="#080b14", plot_bgcolor="#0d1520",
-                    height=680, margin=dict(l=10,r=10,t=40,b=10), xaxis_rangeslider_visible=False,
-                    legend=dict(orientation="h",yanchor="bottom",y=1.01,xanchor="right",x=1),
-                    font=dict(family="Rajdhani"))
-                fig.update_xaxes(gridcolor="#1a2030"); fig.update_yaxes(gridcolor="#1a2030")
-                st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.error(f"Erro ao renderizar: {e}")
-        else:
-            st.warning("Dados insuficientes. Tente outro ativo ou timeframe.")
-    else:
-        st.info("Selecione o ativo e timeframe, depois clique em **Carregar Gráfico**.")
-
-# ══ PERFORMANCE ══════════════════════════════
-with tab_perf:
-    lucro = st.session_state.banca - BANCA_INICIAL
-    m1,m2,m3,m4,m5 = st.columns(5)
-    for col, lbl, val, color in [
-        (m1,"Total Ops",str(total_ops),"#e0e0e0"),
-        (m2,"Wins",str(st.session_state.total_wins),"#00ff88"),
-        (m3,"Losses",str(st.session_state.total_losses),"#ff4444"),
-        (m4,"Lucro Líquido",f"${lucro:+.2f}","#00ff88" if lucro>=0 else "#ff4444"),
-        (m5,"Seq. Atual",str(st.session_state.sequencia),"#00ffcc" if st.session_state.sequencia>=0 else "#ff4444"),
-    ]:
-        with col: st.markdown(mcard(lbl, val, dc=color), unsafe_allow_html=True)
-
-    logs = st.session_state.logs
-    if len(logs) > 0:
-        fig_p = go.Figure()
-        fig_p.add_hline(y=BANCA_INICIAL, line_dash="dash", line_color="#607090")
-        fig_p.add_trace(go.Scatter(x=logs.index, y=logs['Saldo'], mode='lines+markers',
-            line=dict(color='#00ffcc',width=2.5), fill='tozeroy', fillcolor='rgba(0,255,204,0.05)',
-            marker=dict(size=5, color=['#00ff88' if v>=0 else '#ff4444' for v in logs['P&L']])))
-        fig_p.update_layout(template="plotly_dark", paper_bgcolor="#080b14", plot_bgcolor="#0d1520",
-            height=280, title="Curva de Patrimônio", margin=dict(l=10,r=10,t=40,b=10))
-        st.plotly_chart(fig_p, use_container_width=True)
-
-        cb, cd = st.columns(2)
-        with cb:
-            fig_b = go.Figure(go.Bar(x=logs['Hora'], y=logs['P&L'],
-                marker_color=['#00ff88' if v>=0 else '#ff4444' for v in logs['P&L']]))
-            fig_b.update_layout(template="plotly_dark", paper_bgcolor="#080b14", plot_bgcolor="#0d1520",
-                height=250, title="P&L por Operação", margin=dict(l=10,r=10,t=40,b=10))
-            st.plotly_chart(fig_b, use_container_width=True)
-        with cd:
-            w = len(logs[logs['Resultado']=='WIN']); l = len(logs[logs['Resultado']=='LOSS'])
-            fig_pie = go.Figure(go.Pie(labels=["WIN","LOSS"], values=[max(w,0),max(l,0)], hole=0.6,
-                marker_colors=['#00ff88','#ff4444'], textfont_size=14))
-            fig_pie.update_layout(template="plotly_dark", paper_bgcolor="#080b14",
-                height=250, title="W/L", margin=dict(l=10,r=10,t=40,b=10))
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-        st.subheader("Histórico")
-        st.dataframe(logs, use_container_width=True, height=280)
-    else:
-        st.info("Nenhuma operação registrada ainda.")
-
-# ══ RISCO ════════════════════════════════════
-with tab_risco:
-    st.subheader("📐 Calculadora de Gestão de Risco")
-    r1, r2, r3 = st.columns(3)
-    with r1:
-        st.markdown("#### Kelly Criterion")
-        k_wr  = st.slider("Win Rate (%)", 30, 90, max(30, int(win_rate*100))) / 100
-        k_pay = st.slider("Payout (%)", 70, 95, payout_pct, key="kp") / 100
-        kf2   = kelly_fraction(k_wr, k_pay); kv2 = st.session_state.banca * kf2
-        st.markdown(mcard("Entrada recomendada", f"${kv2:.2f}", f"{kf2*100:.1f}% da banca", "#00ff88"), unsafe_allow_html=True)
-
-    with r2:
-        st.markdown("#### Stop Loss / Stop Win")
-        sl_pct = st.slider("Stop Loss (%)", 5, 40, 20)
-        sw_pct = st.slider("Stop Win (%)", 5, 100, 30)
-        sl_val = st.session_state.banca * (1 - sl_pct/100)
-        sw_val = st.session_state.banca * (1 + sw_pct/100)
-        st.markdown(mcard("🔴 Parar abaixo de", f"${sl_val:.2f}", dc="#ff4444"), unsafe_allow_html=True)
-        st.markdown(mcard("🟢 Parar acima de",  f"${sw_val:.2f}", dc="#00ff88"), unsafe_allow_html=True)
-        if st.session_state.banca <= sl_val: st.error("🚨 STOP LOSS ATINGIDO!")
-        elif st.session_state.banca >= sw_val: st.success("🏆 STOP WIN ATINGIDO!")
-
-    with r3:
-        st.markdown("#### Simulador Martingale")
-        mb = st.number_input("Entrada base ($)", 1.0, 50.0, val_entrada, key="mb")
-        mf = st.number_input("Multiplicador", 1.5, 3.0, 2.0, step=0.1, key="mf")
-        mn = st.slider("Níveis", 2, 7, 4, key="mn")
-        ent = [mb * (mf**i) for i in range(mn)]
-        total_exp = sum(ent)
-        pct_b = total_exp / st.session_state.banca * 100 if st.session_state.banca > 0 else 0
-        st.dataframe(pd.DataFrame({
-            'Nível':[f"G{i+1}" for i in range(mn)],
-            'Entrada':[f"${e:.2f}" for e in ent],
-            'Expo. Acum.':[f"${sum(ent[:i+1]):.2f}" for i in range(mn)]
-        }), use_container_width=True, hide_index=True)
-        rc = "#ff4444" if pct_b>50 else "#ffaa00" if pct_b>25 else "#00ff88"
-        st.markdown(mcard("Risco total", f"${total_exp:.2f}", f"{pct_b:.1f}% da banca", rc), unsafe_allow_html=True)
-
-    st.divider()
-    logs = st.session_state.logs
-    avg_pnl = float(logs['P&L'].mean()) if len(logs) > 0 else 0
-    s1,s2,s3,s4 = st.columns(4)
-    with s1: st.markdown(mcard("Melhor Sequência", f"+{st.session_state.melhor_sequencia}", dc="#00ff88"), unsafe_allow_html=True)
-    with s2: st.markdown(mcard("Pior Sequência", str(st.session_state.pior_sequencia), dc="#ff4444"), unsafe_allow_html=True)
-    with s3:
-        c = "#00ff88" if avg_pnl>=0 else "#ff4444"
-        st.markdown(mcard("Média P&L/Op", f"${avg_pnl:+.2f}", dc=c), unsafe_allow_html=True)
-    with s4:
-        c = "#ff4444" if dd>15 else "#ffaa00" if dd>8 else "#00ff88"
-        st.markdown(mcard("Drawdown Atual", f"{dd:.1f}%", dc=c), unsafe_allow_html=True)
+with tab3:
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Wins", st.session_state.total_wins)
+    c2.metric("Losses", st.session_state.total_losses)
+    winrate = (st.session_state.total_wins / (st.session_state.total_wins + st.session_state.total_losses + 0.1)) * 100
+    c3.metric("WinRate", f"{winrate:.1f}%")
+    st.dataframe(st.session_state.logs, use_container_width=True)
