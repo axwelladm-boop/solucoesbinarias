@@ -104,6 +104,68 @@ def calcular_indicadores(df):
     return df.dropna()
 
 # ─────────────────────────────────────────────
+#  SESSÕES DE MERCADO E MELHORES HORÁRIOS
+# ─────────────────────────────────────────────
+SESSOES = {
+    "Ásia":       (0,  9,  "#aa77ff"),
+    "Londres":    (8,  17, "#00ffcc"),
+    "Nova York":  (13, 22, "#ffaa00"),
+}
+# Overlaps = maior liquidez e volatilidade
+MELHORES_JANELAS = [
+    (8,  9,  "Abertura Londres",         "#00ffcc"),
+    (13, 17, "Overlap Londres + NY 🔥",  "#00ff88"),
+    (20, 22, "Fechamento NY",            "#ffaa00"),
+]
+
+def status_mercado():
+    """Retorna sessões ativas, qualidade do momento e próxima janela (UTC-3 Brasília)."""
+    agora = datetime.utcnow()
+    hora_utc  = agora.hour + agora.minute / 60
+    hora_brt  = (hora_utc - 3) % 24   # Brasília = UTC-3
+
+    ativas, cores = [], []
+    for nome, (ini, fim, cor) in SESSOES.items():
+        if ini <= hora_utc < fim:
+            ativas.append(nome); cores.append(cor)
+
+    # Qualidade
+    qualidade = "🔴 BAIXA"
+    qualidade_cor = "#ff4444"
+    descricao = "Mercado com baixa liquidez"
+    for ini, fim, desc, cor in MELHORES_JANELAS:
+        if ini <= hora_utc < fim:
+            qualidade = "🟢 ALTA" if "Overlap" in desc or "Abertura" in desc else "🟡 MÉDIA"
+            qualidade_cor = cor
+            descricao = desc
+            break
+    else:
+        if not ativas:
+            qualidade = "⚫ FECHADO"
+            qualidade_cor = "#607090"
+            descricao = "Mercados principais fechados"
+
+    # Próxima janela
+    proxima = None
+    for ini, fim, desc, cor in MELHORES_JANELAS:
+        ini_brt = (ini - 3) % 24
+        if hora_brt < ini_brt:
+            proxima = f"{desc} às {ini_brt:02.0f}h (Brasília)"
+            break
+    if proxima is None:
+        proxima = "Overlap Londres+NY amanhã às 10h (Brasília)"
+
+    return ativas, qualidade, qualidade_cor, descricao, proxima, hora_brt
+
+EXPIRACAO_SEG = {
+    "30 segundos": 30,
+    "1 minuto":    60,
+    "2 minutos":   120,
+    "5 minutos":   300,
+    "30 minutos":  1800,
+}
+
+# ─────────────────────────────────────────────
 #  DADOS
 # ─────────────────────────────────────────────
 ATIVOS = {
@@ -241,6 +303,7 @@ with st.sidebar:
     tf_sel      = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=1)
     val_entrada = st.number_input("Entrada ($)", 1.0, 100.0, 2.0, step=0.5)
     payout_pct  = st.slider("Payout (%)", 70, 95, 89)
+    expiracao   = st.selectbox("⏱ Tempo de Expiração", ["30 segundos","1 minuto","2 minutos","5 minutos","30 minutos"], index=1)
     period, interval = TIMEFRAMES[tf_sel]
 
     kf = kelly_fraction(win_rate, payout_pct/100)
@@ -281,6 +344,65 @@ tab_sniper, tab_chart, tab_perf, tab_risco = st.tabs([
 
 # ══ SNIPER ══════════════════════════════════
 with tab_sniper:
+    # ── ALERTA SONORO (Web Audio API via JS) ──
+    st.markdown("""
+    <script>
+    function playBeep(type) {
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        if (type === 'call') {
+            osc.frequency.setValueAtTime(880, ctx.currentTime);
+            osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.15);
+            osc.frequency.setValueAtTime(1320, ctx.currentTime + 0.30);
+        } else {
+            osc.frequency.setValueAtTime(660, ctx.currentTime);
+            osc.frequency.setValueAtTime(440, ctx.currentTime + 0.15);
+            osc.frequency.setValueAtTime(330, ctx.currentTime + 0.30);
+        }
+        gain.gain.setValueAtTime(0.4, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.6);
+    }
+    window.playBeep = playBeep;
+    </script>
+    """, unsafe_allow_html=True)
+
+    # ── PAINEL DE SESSÕES E MELHORES HORÁRIOS ──
+    ativas, qualidade, q_cor, descricao, proxima, hora_brt = status_mercado()
+    sessoes_str = " · ".join(ativas) if ativas else "Nenhuma"
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#0d1520,#0a1525);border:1px solid #1a2030;
+                border-left:4px solid {q_cor};border-radius:12px;padding:16px 20px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div>
+                <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">🕐 HORA BRASÍLIA</div>
+                <div style="font-family:'Orbitron',monospace;font-size:1.4rem;color:#ffffff;font-weight:700">{hora_brt:05.2f}h</div>
+            </div>
+            <div>
+                <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">📡 SESSÕES ATIVAS</div>
+                <div style="font-family:'Orbitron',monospace;font-size:0.95rem;color:#00ffcc">{sessoes_str}</div>
+            </div>
+            <div>
+                <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">⚡ QUALIDADE DO MOMENTO</div>
+                <div style="font-family:'Orbitron',monospace;font-size:1rem;font-weight:700;color:{q_cor}">{qualidade}</div>
+                <div style="color:#607090;font-size:0.75rem">{descricao}</div>
+            </div>
+            <div>
+                <div style="color:#607090;font-size:0.72rem;letter-spacing:1px">⏭ PRÓXIMA JANELA</div>
+                <div style="color:#e0e0e0;font-size:0.82rem">{proxima}</div>
+            </div>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+            <span style="background:#aa77ff22;color:#aa77ff;border:1px solid #aa77ff44;padding:2px 10px;border-radius:20px;font-size:0.72rem">🌏 ÁSIA: 20h–05h BRT</span>
+            <span style="background:#00ffcc22;color:#00ffcc;border:1px solid #00ffcc44;padding:2px 10px;border-radius:20px;font-size:0.72rem">🇬🇧 LONDRES: 05h–14h BRT</span>
+            <span style="background:#ffaa0022;color:#ffaa00;border:1px solid #ffaa0044;padding:2px 10px;border-radius:20px;font-size:0.72rem">🇺🇸 NOVA YORK: 10h–19h BRT</span>
+            <span style="background:#00ff8822;color:#00ff88;border:1px solid #00ff8844;padding:2px 10px;border-radius:20px;font-size:0.72rem">🔥 MELHOR: 10h–14h BRT (Overlap)</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     if not ativos_sel:
         st.info("Selecione ao menos um ativo.")
     else:
@@ -315,20 +437,73 @@ with tab_sniper:
                     st.markdown(f"<small style='color:#607090'>ATR</small><br><b>{atr_v:.5f}</b>", unsafe_allow_html=True)
 
                 if sc >= 65 or sp >= 65:
-                    dom = "CALL" if sc >= sp else "PUT"
-                    score = sc if dom=="CALL" else sp
-                    css  = "signal-call" if dom=="CALL" else "signal-put"
-                    icon = "💎 CALL ▲" if dom=="CALL" else "📉 PUT ▼"
-                    bc   = "#00ff88" if dom=="CALL" else "#ff4444"
+                    dom    = "CALL" if sc >= sp else "PUT"
+                    score  = sc if dom=="CALL" else sp
+                    css    = "signal-call" if dom=="CALL" else "signal-put"
+                    icon   = "💎 CALL ▲" if dom=="CALL" else "📉 PUT ▼"
+                    bc     = "#00ff88" if dom=="CALL" else "#ff4444"
+                    acao   = "🟢 COMPRA" if dom=="CALL" else "🔴 VENDA"
+                    seg    = EXPIRACAO_SEG.get(expiracao, 60)
+                    timer_id = f"timer_{nome.replace('/','_').replace(' ','_')}"
+                    sound_type = "call" if dom=="CALL" else "put"
                     st.markdown(f"""
                     <div class="{css}">
                         <div class="signal-title">{icon}</div>
-                        <div style="color:#607090;font-size:0.75rem;margin-top:2px">Score de Confluência</div>
+                        <div style="font-family:'Orbitron',monospace;font-size:1.6rem;font-weight:900;color:{bc};margin:6px 0;letter-spacing:2px">{acao}</div>
+                        <div style="color:#607090;font-size:0.75rem;">Score de Confluência</div>
                         <div style="font-family:'Orbitron',monospace;font-size:1.2rem;color:{bc}">{score}/100</div>
                         <div class="score-bar-bg"><div class="score-bar-fill" style="width:{score}%;background:{bc}"></div></div>
-                        <div style="color:#607090;font-size:0.75rem;margin-top:6px">⏱ Expiração: {tf_sel} × 2</div>
-                    </div>""", unsafe_allow_html=True)
-                    st.toast(f"📡 {nome}: {dom} ({score}/100)", icon="🚀" if dom=="CALL" else "⚠️")
+                        <div style="margin-top:8px;padding:6px 10px;background:rgba(0,0,0,0.3);border-radius:6px;text-align:center">
+                            <span style="color:#607090;font-size:0.72rem;letter-spacing:1px">⏱ EXPIRAÇÃO</span><br>
+                            <span style="font-family:'Orbitron',monospace;color:#ffffff;font-size:1rem;font-weight:700">{expiracao.upper()}</span>
+                        </div>
+                        <div style="margin-top:10px;padding:10px;background:rgba(0,0,0,0.4);border-radius:8px;text-align:center;border:1px solid {bc}44">
+                            <div style="color:#607090;font-size:0.72rem;letter-spacing:1px;margin-bottom:4px">⏳ TEMPO NA OPERAÇÃO</div>
+                            <div id="{timer_id}" style="font-family:'Orbitron',monospace;font-size:2rem;font-weight:900;color:{bc}">--:--</div>
+                            <div id="{timer_id}_msg" style="font-size:0.75rem;color:#607090;margin-top:4px"></div>
+                            <button onclick="startTimer_{timer_id}()" style="margin-top:8px;background:{bc};color:#000;border:none;
+                                border-radius:6px;padding:6px 18px;font-family:'Orbitron',monospace;font-size:0.75rem;
+                                font-weight:700;cursor:pointer;letter-spacing:1px">▶ ENTRAR AGORA</button>
+                        </div>
+                    </div>
+                    <script>
+                    (function(){{
+                        var duration = {seg};
+                        var interval = null;
+                        window["startTimer_{timer_id}"] = function() {{
+                            if (interval) clearInterval(interval);
+                            if (window.playBeep) window.playBeep('{sound_type}');
+                            var remaining = duration;
+                            var el = document.getElementById("{timer_id}");
+                            var msg = document.getElementById("{timer_id}_msg");
+                            interval = setInterval(function() {{
+                                if (remaining <= 0) {{
+                                    clearInterval(interval);
+                                    el.textContent = "00:00";
+                                    el.style.color = "#ff4444";
+                                    msg.textContent = "⚠️ SAIR DA OPERAÇÃO AGORA!";
+                                    if (window.playBeep) window.playBeep('put');
+                                    return;
+                                }}
+                                var m = Math.floor(remaining / 60);
+                                var s = remaining % 60;
+                                el.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+                                var pct = remaining / duration;
+                                el.style.color = pct > 0.4 ? '{bc}' : pct > 0.2 ? '#ffaa00' : '#ff4444';
+                                if (remaining <= 10) {{
+                                    msg.textContent = "🚨 Prepare-se para sair!";
+                                }} else if (remaining <= 30) {{
+                                    msg.textContent = "⚡ Atenção — finalizando em breve";
+                                }} else {{
+                                    msg.textContent = "✅ Operação em andamento";
+                                }}
+                                remaining--;
+                            }}, 1000);
+                        }};
+                    }})();
+                    </script>
+                    """, unsafe_allow_html=True)
+                    st.toast(f"📡 {nome}: {acao} — {expiracao} ({score}/100)", icon="🚀" if dom=="CALL" else "⚠️")
                 else:
                     best = max(sc, sp)
                     st.markdown(f"""
