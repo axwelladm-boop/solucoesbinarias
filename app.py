@@ -272,8 +272,8 @@ with st.sidebar:
     # Seleção por categoria
     cat_sel = st.selectbox("Categoria", ["Todos"] + list(CATEGORIAS.keys()))
     lista_ativos = list(ATIVOS.keys()) if cat_sel == "Todos" else CATEGORIAS[cat_sel]
-    ativos_sel  = st.multiselect("Ativos OTC", lista_ativos,
-                                  default=["EUR/USD (OTC)", "Bitcoin (OTC)", "Facebook (OTC)"])
+    defaults_possiveis = [a for a in ["EUR/USD (OTC)", "Bitcoin (OTC)", "Facebook (OTC)"] if a in lista_ativos]
+    ativos_sel  = st.multiselect("Ativos OTC", lista_ativos, default=defaults_possiveis)
     tf_sel      = st.selectbox("Timeframe", list(TIMEFRAMES.keys()), index=1)
     val_entrada = st.number_input("Entrada ($)", 1.0, 100.0, 2.0, step=0.5)
 
