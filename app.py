@@ -426,6 +426,31 @@ with t1:
                         tempo_str = f"{mins}min {segs_r:02d}s" if mins else f"{segs_r}s"
                         lucro_est = val_entrada * (payout_ativo/100)
 
+                        # ── Alerta sonoro automático ao detectar sinal ──
+                        import streamlit.components.v1 as components
+                        freqs_call = "[880,1100,1320]"
+                        freqs_put  = "[660,440,330]"
+                        freqs = freqs_call if dom=="CALL" else freqs_put
+                        components.html(f"""
+                        <script>
+                        (function(){{
+                            try {{
+                                var ctx = new (window.AudioContext||window.webkitAudioContext)();
+                                var freqs = {freqs};
+                                freqs.forEach(function(f,i){{
+                                    var o=ctx.createOscillator(),g=ctx.createGain();
+                                    o.connect(g);g.connect(ctx.destination);
+                                    o.frequency.value=f;
+                                    g.gain.setValueAtTime(0.3,ctx.currentTime+i*0.2);
+                                    g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+i*0.2+0.25);
+                                    o.start(ctx.currentTime+i*0.2);
+                                    o.stop(ctx.currentTime+i*0.2+0.25);
+                                }});
+                            }} catch(e){{}}
+                        }})();
+                        </script>
+                        """, height=0)
+
                         st.markdown(f"""
                         <div class="{css}">
                           <div class="sig-title">{icon}</div>
@@ -497,8 +522,10 @@ with t2:
                 fig.add_trace(go.Scatter(x=dfc.index,y=dfc['MACD'],line=dict(color='#00ffcc',width=1.5),name="MACD"),row=2,col=1)
                 fig.add_trace(go.Scatter(x=dfc.index,y=dfc['MSIG'],line=dict(color='#ffaa00',width=1.5),name="Signal"),row=2,col=1)
                 fig.add_trace(go.Scatter(x=dfc.index,y=dfc['RSI'],line=dict(color='#aa77ff',width=2),name="RSI"),row=3,col=1)
-                fig.add_hline(y=70,line_dash="dash",line_color="#ff444455",row=3,col=1)
-                fig.add_hline(y=30,line_dash="dash",line_color="#00ff8855",row=3,col=1)
+                # Níveis RSI com add_shape (compatível com todas versões do plotly)
+                for nivel, cor in [(70,"#ff4444"),(30,"#00ff88")]:
+                    fig.add_shape(type="line",x0=dfc.index[0],x1=dfc.index[-1],
+                        y0=nivel,y1=nivel,line=dict(color=cor,width=1,dash="dash"),row=3,col=1)
                 fig.update_layout(template="plotly_dark",paper_bgcolor="#080b14",plot_bgcolor="#0d1520",
                     height=660,margin=dict(l=10,r=10,t=40,b=10),xaxis_rangeslider_visible=False,
                     legend=dict(orientation="h",yanchor="bottom",y=1.01,xanchor="right",x=1))
