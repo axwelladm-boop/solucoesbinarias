@@ -54,3 +54,71 @@ AVISO LEGAL: Este software é uma ferramenta de análise estatística. O mercado
 © 2026 Axwell Financial Technologies | Royal Capital Integration.
 
 Dica para monetização: Se você pretende vender o acesso, este README já passa a impressão de um produto caro e bem desenvolvido. Use o código que te passei anteriormente junto com este texto para criar um portfólio de respeito!
+
+Atualização 
+⬡ AXWELL PRO — O que o app faz
+
+🎯 O que é
+O Axwell Pro é uma plataforma de análise técnica em tempo real voltada para opções binárias OTC, usada na Royal Capital. Ele analisa ativos, gera sinais de COMPRA ou VENDA com score de confiança e ajuda na gestão da sua banca.
+
+📋 Funcionalidades
+🎯 Sniper Board — Painel Principal
+
+Monitora os 31 ativos OTC exatos da sua plataforma (Crypto, Forex, Stocks, Synthetics)
+Calcula 6 indicadores técnicos simultaneamente: RSI, EMA 8/20/50, MACD, Bollinger Bands, Stochastic e ATR
+Gera um Score de Confluência de 0 a 100 — sinal só aparece quando há 65+ pontos de confirmação
+Exibe claramente 🟢 COMPRA ou 🔴 VENDA
+Mostra o payout correto por ativo (89%, 82% ou 15% conforme a lista real)
+Informa quanto tempo ficar na operação com base na expiração escolhida
+Calcula o lucro estimado e retorno total antes de você entrar
+
+⏰ Sessões de Mercado
+
+Mostra a hora atual de Brasília
+Indica quais sessões estão ativas: 🌏 Ásia / 🇬🇧 Londres / 🇺🇸 Nova York
+Avalia a qualidade do momento (Alta 🟢 / Média 🟡 / Baixa 🔴)
+Alerta o melhor horário para operar: 10h–14h (Overlap Londres + NY)
+Indica a próxima janela ideal caso o momento atual seja ruim
+
+📊 Gráfico Avançado
+
+Gráfico de candles com EMAs 8, 20 e 50 sobrepostas
+Bandas de Bollinger para identificar reversões
+Subgráfico de MACD com histograma colorido
+Subgráfico de RSI com níveis de sobrecompra/sobrevenda
+Funciona com 4 timeframes: 1min, 5min, 15min, 1hora
+
+📈 Performance
+
+Curva de patrimônio em tempo real
+Gráfico de P&L por operação
+Gráfico de pizza WIN vs LOSS
+Histórico completo de todas as operações da sessão
+
+🛡️ Gestão de Risco
+
+Kelly Criterion — calcula o tamanho ideal de entrada com base no seu win rate real
+Stop Loss e Stop Win — define limites de perda e ganho com alertas automáticos
+Simulador de Martingale — mostra a exposição acumulada em cada nível
+Alerta de drawdown crítico quando a banca cai mais de 20%
+Badge de risco por operação: BAIXO / MÉDIO / ALTO
+
+💰 Gestão de Banca
+
+Controle de saldo com lucro/prejuízo acumulado
+Registro de WIN e LOSS com payout automático por ativo
+Contador de sequência atual, melhor e pior sequência
+Botão de reset para nova sessão
+
+
+🔵 Os 31 Ativos Monitorados
+CategoriaAtivos🔵 Crypto OTC (89%)Bitcoin, Ethereum, Cardano, Solana, XRP, DYDX🔵 Crypto (15%)ETH/USDT, SOL/USDT, XRP/USDT🔵 Synthetic (89%)Volatility 10, Volatility 25🟡 Forex OTC (89%)EUR/USD, EUR/GBP, GBP/USD, JPY/USD🟡 Forex (82%)EUR/USD, EUR/GBP, USD/CAD, USD/JPY🟢 Stock OTC (89%)Apple, Facebook, Google, Tesla, Microsoft, Intel, McDonald's, AMEX, UKOIL🟢 Stock (89%)S&P 500🔴 Synthetic (89%)Bear Market, Bull Market
+
+⚙️ Como usar na prática
+
+Selecione a categoria e os ativos que quer monitorar
+Escolha o timeframe e o tempo de expiração
+Clique em 🔍 ANALISAR AGORA
+Espere o sinal aparecer com score ≥ 65
+Entre na operação e fique pelo tempo indicado
+Registre o resultado (WIN ou LOSS) para atualizar sua banca e estatísticas
